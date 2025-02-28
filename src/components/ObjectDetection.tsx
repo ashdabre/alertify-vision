@@ -1,10 +1,9 @@
 
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, AlertTriangle, Info, Settings, BellRing, BellOff } from 'lucide-react';
+import { Camera, AlertTriangle, Info, Settings, BellRing, BellOff, User } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -38,9 +37,9 @@ const ObjectDetection = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [currentTab, setCurrentTab] = useState('camera');
-  const [detectorModel, setDetectorModel] = useState<any>(null);
+  const [faceDetectorModel, setFaceDetectorModel] = useState<any>(null);
   const [confidence, setConfidence] = useState(0.5);
-  const [detectionHistory, setDetectionHistory] = useState<string[]>([]);
+  const [faceHistory, setFaceHistory] = useState<string[]>([]);
   const detectionIntervalRef = useRef<number | null>(null);
   const lastSpokenRef = useRef<{label: string, time: number}>({label: '', time: 0});
   
@@ -52,25 +51,25 @@ const ObjectDetection = () => {
     const loadModel = async () => {
       try {
         setIsModelLoading(true);
-        toast.info("Loading object detection model...", {
+        toast.info("Loading face recognition model...", {
           duration: 2000,
         });
         
-        // Load the object detection model
+        // Load the face detection model
         const detector = await pipeline(
           "object-detection",
-          "Xenova/yolos-tiny"
+          "Xenova/detr-resnet-50"
         );
         
-        setDetectorModel(detector);
+        setFaceDetectorModel(detector);
         setIsModelLoading(false);
-        toast.success("Model loaded successfully!", {
+        toast.success("Face recognition model loaded successfully!", {
           duration: 3000,
         });
       } catch (error) {
         console.error("Error loading model:", error);
         setIsModelLoading(false);
-        toast.error("Failed to load the detection model", {
+        toast.error("Failed to load the face recognition model", {
           duration: 5000,
         });
       }
@@ -99,7 +98,7 @@ const ObjectDetection = () => {
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          facingMode: 'environment'
+          facingMode: 'user' // Use the front camera for face detection
         }
       };
       
@@ -152,12 +151,12 @@ const ObjectDetection = () => {
     }
     
     detectionIntervalRef.current = window.setInterval(() => {
-      detectObjects();
+      detectFaces();
     }, 200); // Run detection every 200ms
   };
 
-  const detectObjects = async () => {
-    if (!detectorModel || !videoRef.current || !canvasRef.current || !isStarted) return;
+  const detectFaces = async () => {
+    if (!faceDetectorModel || !videoRef.current || !canvasRef.current || !isStarted) return;
     
     try {
       // Get current frame from video
@@ -171,55 +170,50 @@ const ObjectDetection = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      // Get image data from canvas
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      
-      // Perform object detection
-      const results = await detectorModel(video, {
+      // Perform face detection
+      const results = await faceDetectorModel(video, {
         threshold: confidence,
         percentage: true,
       });
       
-      // Process and update detections
-      const newDetections = results.map((detection: any, index: number) => ({
-        id: `${detection.label}-${index}-${Date.now()}`,
-        label: detection.label,
-        score: detection.score,
-        box: {
-          xmin: detection.box.xmin * canvas.width,
-          ymin: detection.box.ymin * canvas.height,
-          xmax: detection.box.xmax * canvas.width,
-          ymax: detection.box.ymax * canvas.height
-        }
-      }));
+      // Filter only person detections (faces)
+      const faceDetections = results
+        .filter((detection: any) => detection.label === 'person')
+        .map((detection: any, index: number) => ({
+          id: `face-${index}-${Date.now()}`,
+          label: 'Face',
+          score: detection.score,
+          box: {
+            xmin: detection.box.xmin * canvas.width,
+            ymin: detection.box.ymin * canvas.height,
+            xmax: detection.box.xmax * canvas.width,
+            ymax: detection.box.ymax * canvas.height
+          }
+        }));
       
       // Update detections state
-      setDetections(newDetections);
+      setDetections(faceDetections);
       
       // Draw bounding boxes on canvas
-      drawDetections(ctx, newDetections);
+      drawFaces(ctx, faceDetections);
       
       // Handle audio alerts
-      handleAudioAlerts(newDetections);
+      handleAudioAlerts(faceDetections);
       
-      // Update detection history
-      const newLabels = newDetections
-        .filter(d => d.score > 0.7) // Only include high confidence detections
-        .map(d => d.label);
-        
-      if (newLabels.length > 0) {
-        setDetectionHistory(prev => {
-          // Add unique new labels to the beginning of the array
-          const uniqueNewLabels = newLabels.filter(label => !prev.includes(label));
-          return [...uniqueNewLabels, ...prev].slice(0, 10); // Keep only the 10 most recent
+      // Update face history
+      if (faceDetections.length > 0) {
+        const timestamp = new Date().toLocaleTimeString();
+        setFaceHistory(prev => {
+          const newEntry = `Face detected at ${timestamp}`;
+          return [newEntry, ...prev].slice(0, 10); // Keep only the 10 most recent
         });
       }
     } catch (error) {
-      console.error("Error during object detection:", error);
+      console.error("Error during face detection:", error);
     }
   };
 
-  const drawDetections = (ctx: CanvasRenderingContext2D, detections: Detection[]) => {
+  const drawFaces = (ctx: CanvasRenderingContext2D, faces: Detection[]) => {
     // Clear canvas for new drawings
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     
@@ -228,28 +222,40 @@ const ObjectDetection = () => {
       ctx.drawImage(videoRef.current, 0, 0, ctx.canvas.width, ctx.canvas.height);
     }
     
-    // Draw detection boxes and labels
-    detections.forEach(detection => {
-      const { xmin, ymin, xmax, ymax } = detection.box;
+    // Draw detection boxes and labels for faces
+    faces.forEach(face => {
+      const { xmin, ymin, xmax, ymax } = face.box;
       const width = xmax - xmin;
       const height = ymax - ymin;
       
-      // Calculate colors based on confidence
-      const alpha = Math.min(1, detection.score + 0.2);
-      const hue = detection.score > 0.7 ? 160 : detection.score > 0.5 ? 40 : 0;
+      // Create gradient effect for face boxes
+      const gradient = ctx.createLinearGradient(xmin, ymin, xmax, ymax);
+      gradient.addColorStop(0, 'rgba(0, 132, 255, 0.4)');
+      gradient.addColorStop(1, 'rgba(0, 211, 255, 0.4)');
+      
+      // Draw face outline with glow effect
+      ctx.shadowColor = 'rgba(0, 175, 255, 0.8)';
+      ctx.shadowBlur = 15;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(xmin, ymin, width, height);
+      ctx.shadowBlur = 0;
       
       // Draw semi-transparent background
-      ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${alpha * 0.2})`;
+      ctx.fillStyle = gradient;
       ctx.fillRect(xmin, ymin, width, height);
       
       // Draw border
-      ctx.strokeStyle = `hsla(${hue}, 100%, 50%, ${alpha * 0.8})`;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.lineWidth = 2;
       ctx.strokeRect(xmin, ymin, width, height);
       
+      // Calculate confidence percentage
+      const confidencePercent = Math.round(face.score * 100);
+      
       // Draw label background
-      ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${alpha * 0.9})`;
-      const label = `${detection.label} (${Math.round(detection.score * 100)}%)`;
+      ctx.fillStyle = 'rgba(0, 150, 255, 0.85)';
+      const label = `Face (${confidencePercent}%)`;
       const textMetrics = ctx.measureText(label);
       const textWidth = textMetrics.width + 10;
       const textHeight = 24;
@@ -259,40 +265,65 @@ const ObjectDetection = () => {
       ctx.fillStyle = 'white';
       ctx.font = 'bold 14px Arial';
       ctx.fillText(label, xmin + 5, ymin - 7);
+      
+      // Draw facial keypoints indicator (simplified)
+      const centerX = xmin + width / 2;
+      const centerY = ymin + height / 3;
+      const eyeDistance = width / 4;
+      
+      // Left eye (simplified)
+      ctx.beginPath();
+      ctx.arc(centerX - eyeDistance, centerY, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = 'white';
+      ctx.fill();
+      
+      // Right eye (simplified)
+      ctx.beginPath();
+      ctx.arc(centerX + eyeDistance, centerY, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = 'white';
+      ctx.fill();
     });
+    
+    // Add scanning effect overlay
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.05)';
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   };
 
-  const handleAudioAlerts = (detections: Detection[]) => {
-    if (isMuted || !detections.length) return;
-    
-    // Sort by confidence and get the highest
-    const topDetection = [...detections]
-      .filter(d => d.score > 0.7) // Only consider high confidence detections
-      .sort((a, b) => b.score - a.score)[0];
-    
-    if (!topDetection) return;
+  const handleAudioAlerts = (faces: Detection[]) => {
+    if (isMuted || !faces.length) return;
     
     const now = Date.now();
-    const { label } = topDetection;
     
-    // Don't repeat the same object within 5 seconds
-    if (lastSpokenRef.current.label === label && 
+    // Don't repeat the face alert within 5 seconds
+    if (lastSpokenRef.current.label === 'Face' && 
         now - lastSpokenRef.current.time < 5000) {
       return;
     }
     
-    // Create speech message
-    const utterance = new SpeechSynthesisUtterance();
-    utterance.text = `${label} detected. Please be aware.`;
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.volume = 0.8;
-    
-    // Speak the message
-    synth.speak(utterance);
+    if (faces.length === 1) {
+      // Create speech message for single face
+      const utterance = new SpeechSynthesisUtterance();
+      utterance.text = `Face detected.`;
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.volume = 0.8;
+      
+      // Speak the message
+      synth.speak(utterance);
+    } else if (faces.length > 1) {
+      // Create speech message for multiple faces
+      const utterance = new SpeechSynthesisUtterance();
+      utterance.text = `${faces.length} faces detected.`;
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.volume = 0.8;
+      
+      // Speak the message
+      synth.speak(utterance);
+    }
     
     // Update last spoken reference
-    lastSpokenRef.current = { label, time: now };
+    lastSpokenRef.current = { label: 'Face', time: now };
   };
 
   const toggleMute = () => {
@@ -310,14 +341,14 @@ const ObjectDetection = () => {
         <header className="flex flex-col items-center text-center mb-6 animate-fade-in">
           <div className="flex items-center justify-center mb-4">
             <div className="relative">
-              <Camera className="h-10 w-10 text-primary mr-2" />
-              <div className="absolute top-0 right-0 w-3 h-3 bg-destructive rounded-full animate-pulse-light"></div>
+              <User className="h-10 w-10 text-primary mr-2" />
+              <div className="absolute top-0 right-0 w-3 h-3 bg-blue-500 rounded-full animate-pulse-light"></div>
             </div>
-            <h1 className="text-4xl font-bold tracking-tight">Alertify Vision</h1>
+            <h1 className="text-4xl font-bold tracking-tight">Face Recognition</h1>
           </div>
           <p className="text-muted-foreground max-w-2xl">
-            Advanced object detection with real-time alerts. Your intelligent camera 
-            assistant that helps you navigate your surroundings safely.
+            Advanced face detection with real-time alerts. Your intelligent camera 
+            assistant that helps you identify faces in your surroundings.
           </p>
         </header>
         
@@ -346,19 +377,19 @@ const ObjectDetection = () => {
                     <div>
                       <CardTitle className="flex items-center">
                         <span className="relative">
-                          Live Detection
+                          Face Detection
                           {isStarted && (
                             <span className="absolute -top-1 -right-3 flex h-3 w-3">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
                             </span>
                           )}
                         </span>
                       </CardTitle>
                       <CardDescription>
                         {isStarted 
-                          ? "Camera is active and detecting objects in real-time" 
-                          : "Start the camera to begin detecting objects"}
+                          ? "Camera is active and detecting faces in real-time" 
+                          : "Start the camera to begin face recognition"}
                       </CardDescription>
                     </div>
                     <div className="flex items-center">
@@ -395,10 +426,10 @@ const ObjectDetection = () => {
                     {!isStarted && !isModelLoading && (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center p-6">
-                          <Camera className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+                          <User className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
                           <h3 className="text-lg font-medium text-muted-foreground">Camera is off</h3>
                           <p className="text-sm text-muted-foreground/70 max-w-xs mx-auto mt-2">
-                            Click the "Start Camera" button to begin real-time object detection
+                            Click the "Start Camera" button to begin face recognition
                           </p>
                         </div>
                       </div>
@@ -407,8 +438,8 @@ const ObjectDetection = () => {
                     {isModelLoading && (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center p-6">
-                          <div className="w-16 h-16 mx-auto mb-4 border-4 border-t-primary border-white/20 rounded-full animate-spin"></div>
-                          <h3 className="text-lg font-medium">Loading detection model</h3>
+                          <div className="w-16 h-16 mx-auto mb-4 border-4 border-t-blue-500 border-white/20 rounded-full animate-spin"></div>
+                          <h3 className="text-lg font-medium">Loading face recognition model</h3>
                           <p className="text-sm text-muted-foreground max-w-xs mx-auto mt-2">
                             Please wait while we initialize the AI model...
                           </p>
@@ -434,18 +465,18 @@ const ObjectDetection = () => {
                   <div className="mb-3 sm:mb-0">
                     <p className="text-sm font-medium mb-2">Detection History</p>
                     <div className="flex flex-wrap gap-2">
-                      {detectionHistory.length > 0 ? (
-                        detectionHistory.map((label, i) => (
+                      {faceHistory.length > 0 ? (
+                        faceHistory.map((entry, i) => (
                           <Badge 
-                            key={`${label}-${i}`} 
+                            key={`${entry}-${i}`} 
                             variant="outline"
                             className="text-xs animate-fade-in"
                           >
-                            {label}
+                            {entry}
                           </Badge>
                         ))
                       ) : (
-                        <span className="text-xs text-muted-foreground">No objects detected yet</span>
+                        <span className="text-xs text-muted-foreground">No faces detected yet</span>
                       )}
                     </div>
                   </div>
@@ -476,8 +507,8 @@ const ObjectDetection = () => {
         <div className="w-full max-w-3xl text-center mt-8">
           <p className="text-sm text-muted-foreground">
             <Info className="h-4 w-4 inline mr-1" />
-            For best results, hold your device steady and ensure good lighting.
-            Object detection works locally on your device using machine learning.
+            For best results, ensure good lighting and face the camera directly.
+            Face recognition works locally on your device using machine learning.
           </p>
         </div>
       </div>

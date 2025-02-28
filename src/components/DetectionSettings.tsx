@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { BellRing, BellOff, AlertTriangle, Info } from "lucide-react";
+import { BellRing, BellOff, AlertTriangle, Info, User } from "lucide-react";
 
 interface DetectionSettingsProps {
   confidence: number;
@@ -28,9 +28,9 @@ const DetectionSettings: React.FC<DetectionSettingsProps> = ({
   return (
     <Card className="glass-card border-0 shadow-lg">
       <CardHeader>
-        <CardTitle>Detection Settings</CardTitle>
+        <CardTitle>Face Recognition Settings</CardTitle>
         <CardDescription>
-          Configure how the object detection works
+          Configure how the face recognition works
         </CardDescription>
       </CardHeader>
       
@@ -39,7 +39,7 @@ const DetectionSettings: React.FC<DetectionSettingsProps> = ({
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium">
-                Detection Confidence Threshold
+                Face Detection Confidence Threshold
               </label>
               <span className="text-sm text-muted-foreground">
                 {Math.round(confidence * 100)}%
@@ -54,13 +54,13 @@ const DetectionSettings: React.FC<DetectionSettingsProps> = ({
               className="py-4"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>More objects (10%)</span>
+              <span>More sensitive (10%)</span>
               <span>Higher accuracy (90%)</span>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
               <Info className="h-3 w-3 inline mr-1" />
-              Lower values detect more objects but may include false positives.
-              Higher values are more precise but might miss some objects.
+              Lower values detect faces more easily but may include false positives.
+              Higher values are more precise but might miss some faces in challenging conditions.
             </p>
           </div>
           
@@ -78,7 +78,7 @@ const DetectionSettings: React.FC<DetectionSettingsProps> = ({
                   </label>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Enable voice notifications when objects are detected
+                  Enable voice notifications when faces are detected
                 </p>
               </div>
               <Switch
@@ -94,11 +94,11 @@ const DetectionSettings: React.FC<DetectionSettingsProps> = ({
         <div className="flex items-start p-3 bg-secondary/50 rounded-md w-full">
           <AlertTriangle className="h-4 w-4 text-amber-500 mr-2 mt-0.5 flex-shrink-0" />
           <div className="text-xs">
-            <p className="font-medium">About accuracy</p>
+            <p className="font-medium">About face recognition</p>
             <p className="text-muted-foreground">
-              The detection model works best for common objects in good lighting. 
-              The system is designed to provide alerts but shouldn't be relied upon 
-              exclusively for safety-critical situations.
+              The face recognition model works best in good lighting conditions with clear, 
+              unobstructed views of faces. This system is designed for general face detection
+              and does not store or identify specific individuals.
             </p>
           </div>
         </div>
