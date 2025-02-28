@@ -15,29 +15,16 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import DetectionSettings from "@/components/DetectionSettings";
-import { pipeline } from "@huggingface/transformers";
-
-interface Detection {
-  id: string;
-  label: string;
-  score: number;
-  box: {
-    xmin: number;
-    ymin: number;
-    xmax: number;
-    ymax: number;
-  };
-}
+import { loadFaceRecognitionModels, loadReferenceFaces, recognizeFaces, RecognizedFace } from '@/services/faceRecognition';
 
 const ObjectDetection = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [detections, setDetections] = useState<Detection[]>([]);
+  const [detections, setDetections] = useState<RecognizedFace[]>([]);
   const [isStarted, setIsStarted] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [currentTab, setCurrentTab] = useState('camera');
-  const [faceDetectorModel, setFaceDetectorModel] = useState<any>(null);
   const [confidence, setConfidence] = useState(0.5);
   const [faceHistory, setFaceHistory] = useState<string[]>([]);
   const detectionIntervalRef = useRef<number | null>(null);
@@ -48,34 +35,79 @@ const ObjectDetection = () => {
 
   // Setup camera when component mounts
   useEffect(() => {
-    const loadModel = async () => {
+    const loadModels = async () => {
       try {
         setIsModelLoading(true);
-        toast.info("Loading face recognition model...", {
-          duration: 2000,
+        toast.info("Loading face recognition models...", {
+          duration: 3000,
         });
         
-        // Load the face detection model
-        const detector = await pipeline(
-          "object-detection",
-          "Xenova/detr-resnet-50"
-        );
+        // Load face-api.js models
+        const modelsLoaded = await loadFaceRecognitionModels();
+        if (!modelsLoaded) {
+          throw new Error("Failed to load face recognition models");
+        }
         
-        setFaceDetectorModel(detector);
+        // Load reference faces
+        const referencesLoaded = await loadReferenceFaces();
+        if (!referencesLoaded) {
+          throw new Error("Failed to load reference faces");
+        }
+        
         setIsModelLoading(false);
-        toast.success("Face recognition model loaded successfully!", {
+        toast.success("Face recognition ready!", {
           duration: 3000,
         });
       } catch (error) {
-        console.error("Error loading model:", error);
+        console.error("Error loading models:", error);
         setIsModelLoading(false);
-        toast.error("Failed to load the face recognition model", {
+        toast.error("Failed to load face recognition models", {
           duration: 5000,
         });
       }
     };
 
-    loadModel();
+    // Create models directory for face-api.js
+    const createModelStructure = async () => {
+      // Note: In a production app, you would serve these model files from your server
+      // For this demo, we're using the face-api.js models from CDN
+      const modelUrlBase = 'https://justadudewhohacks.github.io/face-api.js/models/';
+      
+      // Create script to create virtual model structure
+      const script = document.createElement('script');
+      script.textContent = `
+        // Create a virtual file system for face-api.js
+        window.faceDetectionModels = {
+          ssdMobilenetv1: {
+            modelUrl: '${modelUrlBase}ssd_mobilenetv1_model-weights_manifest.json',
+          },
+          faceLandmark68Net: {
+            modelUrl: '${modelUrlBase}face_landmark_68_model-weights_manifest.json',
+          },
+          faceRecognitionNet: {
+            modelUrl: '${modelUrlBase}face_recognition_model-weights_manifest.json',
+          }
+        };
+        
+        // Override face-api.js model loading to use our virtual file system
+        const originalLoadFromUri = faceapi.nets.ssdMobilenetv1.loadFromUri;
+        faceapi.nets.ssdMobilenetv1.loadFromUri = async function(uri) {
+          return this.loadFromDisk(window.faceDetectionModels.ssdMobilenetv1.modelUrl);
+        };
+        
+        faceapi.nets.faceLandmark68Net.loadFromUri = async function(uri) {
+          return this.loadFromDisk(window.faceDetectionModels.faceLandmark68Net.modelUrl);
+        };
+        
+        faceapi.nets.faceRecognitionNet.loadFromUri = async function(uri) {
+          return this.loadFromDisk(window.faceDetectionModels.faceRecognitionNet.modelUrl);
+        };
+      `;
+      document.head.appendChild(script);
+    };
+
+    createModelStructure();
+    loadModels();
 
     return () => {
       // Clean up video stream when component unmounts
@@ -152,11 +184,11 @@ const ObjectDetection = () => {
     
     detectionIntervalRef.current = window.setInterval(() => {
       detectFaces();
-    }, 200); // Run detection every 200ms
+    }, 500); // Run detection every 500ms for better performance
   };
 
   const detectFaces = async () => {
-    if (!faceDetectorModel || !videoRef.current || !canvasRef.current || !isStarted) return;
+    if (!videoRef.current || !canvasRef.current || !isStarted) return;
     
     try {
       // Get current frame from video
@@ -170,50 +202,40 @@ const ObjectDetection = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      // Perform face detection
-      const results = await faceDetectorModel(video, {
-        threshold: confidence,
-        percentage: true,
-      });
+      // Perform face recognition
+      const recognizedFaces = await recognizeFaces(video);
       
-      // Filter only person detections (faces)
-      const faceDetections = results
-        .filter((detection: any) => detection.label === 'person')
-        .map((detection: any, index: number) => ({
-          id: `face-${index}-${Date.now()}`,
-          label: 'Face',
-          score: detection.score,
-          box: {
-            xmin: detection.box.xmin * canvas.width,
-            ymin: detection.box.ymin * canvas.height,
-            xmax: detection.box.xmax * canvas.width,
-            ymax: detection.box.ymax * canvas.height
-          }
-        }));
+      // Filter faces based on confidence threshold
+      const filteredFaces = recognizedFaces.filter(face => 
+        face.score && face.score > confidence
+      );
       
       // Update detections state
-      setDetections(faceDetections);
+      setDetections(filteredFaces);
       
       // Draw bounding boxes on canvas
-      drawFaces(ctx, faceDetections);
+      drawFaces(ctx, filteredFaces);
       
       // Handle audio alerts
-      handleAudioAlerts(faceDetections);
+      handleAudioAlerts(filteredFaces);
       
       // Update face history
-      if (faceDetections.length > 0) {
+      if (filteredFaces.length > 0) {
         const timestamp = new Date().toLocaleTimeString();
+        const newEntries = filteredFaces.map(face => 
+          `${face.name} detected at ${timestamp}`
+        );
+        
         setFaceHistory(prev => {
-          const newEntry = `Face detected at ${timestamp}`;
-          return [newEntry, ...prev].slice(0, 10); // Keep only the 10 most recent
+          return [...newEntries, ...prev].slice(0, 10); // Keep only the 10 most recent
         });
       }
     } catch (error) {
-      console.error("Error during face detection:", error);
+      console.error("Error during face recognition:", error);
     }
   };
 
-  const drawFaces = (ctx: CanvasRenderingContext2D, faces: Detection[]) => {
+  const drawFaces = (ctx: CanvasRenderingContext2D, faces: RecognizedFace[]) => {
     // Clear canvas for new drawings
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     
@@ -224,64 +246,76 @@ const ObjectDetection = () => {
     
     // Draw detection boxes and labels for faces
     faces.forEach(face => {
-      const { xmin, ymin, xmax, ymax } = face.box;
-      const width = xmax - xmin;
-      const height = ymax - ymin;
+      const { x, y, width, height } = face.box;
+      
+      // Pick color based on category
+      let colorBase;
+      switch (face.category) {
+        case 'user':
+          colorBase = 'rgba(0, 132, 255, '; // Blue for user (ASHAL)
+          break;
+        case 'celebrity':
+          colorBase = 'rgba(255, 128, 0, '; // Orange for celebrities
+          break;
+        default:
+          colorBase = 'rgba(150, 150, 150, '; // Gray for unknown
+      }
       
       // Create gradient effect for face boxes
-      const gradient = ctx.createLinearGradient(xmin, ymin, xmax, ymax);
-      gradient.addColorStop(0, 'rgba(0, 132, 255, 0.4)');
-      gradient.addColorStop(1, 'rgba(0, 211, 255, 0.4)');
+      const gradient = ctx.createLinearGradient(x, y, x + width, y + height);
+      gradient.addColorStop(0, `${colorBase}0.4)`);
+      gradient.addColorStop(1, `${colorBase}0.4)`);
       
       // Draw face outline with glow effect
-      ctx.shadowColor = 'rgba(0, 175, 255, 0.8)';
+      ctx.shadowColor = `${colorBase}0.8)`;
       ctx.shadowBlur = 15;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
       ctx.lineWidth = 2;
-      ctx.strokeRect(xmin, ymin, width, height);
+      ctx.strokeRect(x, y, width, height);
       ctx.shadowBlur = 0;
       
       // Draw semi-transparent background
       ctx.fillStyle = gradient;
-      ctx.fillRect(xmin, ymin, width, height);
+      ctx.fillRect(x, y, width, height);
       
       // Draw border
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.lineWidth = 2;
-      ctx.strokeRect(xmin, ymin, width, height);
+      ctx.strokeRect(x, y, width, height);
       
-      // Calculate confidence percentage
-      const confidencePercent = Math.round(face.score * 100);
+      // Calculate confidence percentage if available
+      const confidenceText = face.score ? ` (${Math.round((face.score) * 100)}%)` : '';
       
-      // Draw label background
-      ctx.fillStyle = 'rgba(0, 150, 255, 0.85)';
-      const label = `Face (${confidencePercent}%)`;
+      // Draw name background
+      ctx.fillStyle = `${colorBase}0.85)`;
+      const label = `${face.name}${confidenceText}`;
       const textMetrics = ctx.measureText(label);
       const textWidth = textMetrics.width + 10;
       const textHeight = 24;
-      ctx.fillRect(xmin, ymin - textHeight, textWidth, textHeight);
+      ctx.fillRect(x, y - textHeight, textWidth, textHeight);
       
-      // Draw label text
+      // Draw name text
       ctx.fillStyle = 'white';
       ctx.font = 'bold 14px Arial';
-      ctx.fillText(label, xmin + 5, ymin - 7);
+      ctx.fillText(label, x + 5, y - 7);
       
-      // Draw facial keypoints indicator (simplified)
-      const centerX = xmin + width / 2;
-      const centerY = ymin + height / 3;
-      const eyeDistance = width / 4;
-      
-      // Left eye (simplified)
-      ctx.beginPath();
-      ctx.arc(centerX - eyeDistance, centerY, 3, 0, 2 * Math.PI);
-      ctx.fillStyle = 'white';
-      ctx.fill();
-      
-      // Right eye (simplified)
-      ctx.beginPath();
-      ctx.arc(centerX + eyeDistance, centerY, 3, 0, 2 * Math.PI);
-      ctx.fillStyle = 'white';
-      ctx.fill();
+      // Add special indicator for ASHAL
+      if (face.name === 'ASHAL') {
+        // Create a crown or special indicator
+        ctx.fillStyle = 'gold';
+        ctx.beginPath();
+        ctx.moveTo(x + width/2, y - 30);
+        ctx.lineTo(x + width/2 - 15, y - 20);
+        ctx.lineTo(x + width/2 - 7, y - 10);
+        ctx.lineTo(x + width/2, y - 15);
+        ctx.lineTo(x + width/2 + 7, y - 10);
+        ctx.lineTo(x + width/2 + 15, y - 20);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     });
     
     // Add scanning effect overlay
@@ -289,41 +323,39 @@ const ObjectDetection = () => {
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   };
 
-  const handleAudioAlerts = (faces: Detection[]) => {
+  const handleAudioAlerts = (faces: RecognizedFace[]) => {
     if (isMuted || !faces.length) return;
     
     const now = Date.now();
     
-    // Don't repeat the face alert within 5 seconds
-    if (lastSpokenRef.current.label === 'Face' && 
-        now - lastSpokenRef.current.time < 5000) {
-      return;
-    }
-    
-    if (faces.length === 1) {
-      // Create speech message for single face
+    faces.forEach(face => {
+      // Don't repeat the same face announcement within 5 seconds
+      if (lastSpokenRef.current.label === face.name && 
+          now - lastSpokenRef.current.time < 5000) {
+        return;
+      }
+      
+      // Create speech message based on who was detected
       const utterance = new SpeechSynthesisUtterance();
-      utterance.text = `Face detected.`;
+      
+      if (face.name === 'ASHAL') {
+        utterance.text = `Hello ASHAL, welcome back!`;
+      } else if (face.category === 'celebrity') {
+        utterance.text = `Celebrity detected: ${face.name}`;
+      } else {
+        utterance.text = `Unknown person detected`;
+      }
+      
       utterance.rate = 1;
       utterance.pitch = 1;
       utterance.volume = 0.8;
       
       // Speak the message
       synth.speak(utterance);
-    } else if (faces.length > 1) {
-      // Create speech message for multiple faces
-      const utterance = new SpeechSynthesisUtterance();
-      utterance.text = `${faces.length} faces detected.`;
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      utterance.volume = 0.8;
       
-      // Speak the message
-      synth.speak(utterance);
-    }
-    
-    // Update last spoken reference
-    lastSpokenRef.current = { label: 'Face', time: now };
+      // Update last spoken reference
+      lastSpokenRef.current = { label: face.name, time: now };
+    });
   };
 
   const toggleMute = () => {
