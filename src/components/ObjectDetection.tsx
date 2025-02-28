@@ -42,7 +42,7 @@ const ObjectDetection = () => {
           duration: 3000,
         });
         
-        // Load face-api.js models
+        // Load face-api.js models directly from CDN
         const modelsLoaded = await loadFaceRecognitionModels();
         if (!modelsLoaded) {
           throw new Error("Failed to load face recognition models");
@@ -67,46 +67,6 @@ const ObjectDetection = () => {
       }
     };
 
-    // Create models directory for face-api.js
-    const createModelStructure = async () => {
-      // Note: In a production app, you would serve these model files from your server
-      // For this demo, we're using the face-api.js models from CDN
-      const modelUrlBase = 'https://justadudewhohacks.github.io/face-api.js/models/';
-      
-      // Create script to create virtual model structure
-      const script = document.createElement('script');
-      script.textContent = `
-        // Create a virtual file system for face-api.js
-        window.faceDetectionModels = {
-          ssdMobilenetv1: {
-            modelUrl: '${modelUrlBase}ssd_mobilenetv1_model-weights_manifest.json',
-          },
-          faceLandmark68Net: {
-            modelUrl: '${modelUrlBase}face_landmark_68_model-weights_manifest.json',
-          },
-          faceRecognitionNet: {
-            modelUrl: '${modelUrlBase}face_recognition_model-weights_manifest.json',
-          }
-        };
-        
-        // Override face-api.js model loading to use our virtual file system
-        const originalLoadFromUri = faceapi.nets.ssdMobilenetv1.loadFromUri;
-        faceapi.nets.ssdMobilenetv1.loadFromUri = async function(uri) {
-          return this.loadFromDisk(window.faceDetectionModels.ssdMobilenetv1.modelUrl);
-        };
-        
-        faceapi.nets.faceLandmark68Net.loadFromUri = async function(uri) {
-          return this.loadFromDisk(window.faceDetectionModels.faceLandmark68Net.modelUrl);
-        };
-        
-        faceapi.nets.faceRecognitionNet.loadFromUri = async function(uri) {
-          return this.loadFromDisk(window.faceDetectionModels.faceRecognitionNet.modelUrl);
-        };
-      `;
-      document.head.appendChild(script);
-    };
-
-    createModelStructure();
     loadModels();
 
     return () => {

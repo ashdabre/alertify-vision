@@ -16,13 +16,16 @@ export interface RecognizedFace {
   score?: number;
 }
 
-// Initialize face-api.js models
+// Initialize face-api.js models with direct CDN URLs
 export const loadFaceRecognitionModels = async () => {
   try {
+    // Direct CDN URLs for the models
+    const modelBaseUrl = 'https://justadudewhohacks.github.io/face-api.js/models';
+    
     await Promise.all([
-      faceapi.nets.ssdMobilenetv1.loadFromUri('/models'),
-      faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
-      faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
+      faceapi.nets.ssdMobilenetv1.loadFromUri(modelBaseUrl),
+      faceapi.nets.faceLandmark68Net.loadFromUri(modelBaseUrl),
+      faceapi.nets.faceRecognitionNet.loadFromUri(modelBaseUrl),
     ]);
     return true;
   } catch (error) {
